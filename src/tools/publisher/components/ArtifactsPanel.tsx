@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  Copy, ExternalLink, FileText, FolderOpen, MoreVertical, Trash2,
+  Copy, ExternalLink, FileText, FolderOpen, Loader2, MoreVertical, ScanSearch, Trash2,
 } from 'lucide-react'
 import { Card, CardTitle } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
@@ -12,12 +12,15 @@ import { useNotificationStore } from '@/stores/notificationStore'
 interface ArtifactsPanelProps {
   artifacts: ArtifactInfo[]
   onRefresh: () => void
+  userId?: string
+  projectPath?: string
 }
 
-export function ArtifactsPanel({ artifacts, onRefresh }: ArtifactsPanelProps) {
+export function ArtifactsPanel({ artifacts, onRefresh, userId, projectPath }: ArtifactsPanelProps) {
   const toast = useNotificationStore()
   const [menuOpen, setMenuOpen] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const [scanning, setScanning] = useState(false)
 
   useEffect(() => {
     if (!menuOpen) return
@@ -61,9 +64,53 @@ export function ArtifactsPanel({ artifacts, onRefresh }: ArtifactsPanelProps) {
     }
   }
 
+  const handleScanForJars = async () => {
+    if (!userId || !projectPath) return
+    setScanning(true)
+    try {
+      const found = await api.publisher.findJars(projectPath)
+      const known = new Set(artifacts.map((a) => a.filePath))
+      const untracked = found.filter((path) => !known.has(path))
+
+      if (untracked.length === 0) {
+        toast.info('Nothing New Found', 'Every jar in this workspace is already tracked.')
+        return
+      }
+
+      let imported = 0
+      for (const path of untracked) {
+        try {
+          await api.publisher.importJarAsArtifact(userId, projectPath, path)
+          imported++
+        } catch {
+          // Already tracked (race) or unreadable — skip quietly, this is a best-effort scan.
+        }
+      }
+
+      if (imported > 0) {
+        toast.success('Scan Complete', `Imported ${imported} jar${imported === 1 ? '' : 's'} not previously tracked.`)
+        onRefresh()
+      } else {
+        toast.info('Nothing New Found', 'Every jar in this workspace is already tracked.')
+      }
+    } catch (err) {
+      toast.error('Scan Failed', String(err))
+    } finally {
+      setScanning(false)
+    }
+  }
+
   return (
     <Card>
-      <CardTitle>Generated Files</CardTitle>
+      <div className="flex items-center justify-between gap-4">
+        <CardTitle>Generated Files</CardTitle>
+        {userId && projectPath && (
+          <Button variant="ghost" size="sm" onClick={handleScanForJars} disabled={scanning}>
+            {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ScanSearch className="h-3.5 w-3.5" />}
+            Scan for JARs
+          </Button>
+        )}
+      </div>
       <div className="mt-4 space-y-2">
         {artifacts.length === 0 ? (
           <p className="text-sm text-[#666] py-6 text-center">No artifacts yet. Run a build to generate files.</p>

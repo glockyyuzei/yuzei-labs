@@ -94,6 +94,14 @@ export interface ActivityEntry {
   createdAt: string
 }
 
+export interface DeployProfileConfig {
+  artifactPath?: string
+  targetFolder?: string
+  serverId?: string
+  autoBackup: boolean
+  autoRestart: boolean
+}
+
 export interface DeploymentProfile {
   id: string
   name: string
@@ -251,6 +259,8 @@ export const api = {
       artifacts: { filename: string; filePath: string; sizeBytes: number }[]
     }) => invoke<void>('send_discord_webhook', { payload }),
     findJars: (path: string) => invoke<string[]>('find_jar_files', { path }),
+    importJarAsArtifact: (userId: string, projectPath: string, filePath: string) =>
+      invoke<ArtifactInfo>('import_jar_as_artifact', { userId, projectPath, filePath }),
     openInIde: (projectPath: string, ide: string) =>
       invoke<void>('open_in_ide', { projectPath, ide }),
     detectInstalledIdes: () => invoke<DetectedIde[]>('detect_installed_ides'),

@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/Input'
 import { useAuthStore } from '@/stores/authStore'
 import { useNotificationStore } from '@/stores/notificationStore'
 import { useSettingsStore } from '@/stores/settingsStore'
-import { api, type DeploymentProfile, type ServerConfig, type ServerStatus, type FileEntry, type DeployHistoryEntry } from '@/lib/api'
+import { api, type DeploymentProfile, type DeployProfileConfig, type ServerConfig, type ServerStatus, type FileEntry, type DeployHistoryEntry } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 interface PteroConfig {
@@ -30,6 +30,28 @@ function pteroConfig(server: ServerConfig | null): PteroConfig | null {
   return c?.serverType === 'pterodactyl' && c.pterodactylServerId
     ? (c as PteroConfig)
     : null
+}
+
+/**
+ * Safely reads a deployment profile's freeform config into a typed shape
+ * instead of blindly casting to Record<string, string> — old profiles may
+ * have autoBackup/autoRestart stored as the strings 'true'/'false' (from
+ * before this was a real boolean), so both forms are accepted on read.
+ */
+function normalizeDeployConfig(raw: Record<string, unknown>): DeployProfileConfig {
+  const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
+  const asBool = (v: unknown, fallback: boolean): boolean => {
+    if (typeof v === 'boolean') return v
+    if (typeof v === 'string') return v === 'true'
+    return fallback
+  }
+  return {
+    artifactPath: asString(raw.artifactPath),
+    targetFolder: asString(raw.targetFolder),
+    serverId: asString(raw.serverId),
+    autoBackup: asBool(raw.autoBackup, true),
+    autoRestart: asBool(raw.autoRestart, false),
+  }
 }
 
 const tabs = [
@@ -150,10 +172,13 @@ export function DeployTool() {
         if (event.payload.serverId !== selectedServer.id) return
         setConsoleLog((log) => (log ? `${log}\n${event.payload.line}` : event.payload.line))
       }).then((fn) => {
-        if (cancelled) fn()
-        else unlisten = fn
+        if (cancelled) {
+          fn()
+        } else {
+          unlisten = fn
+          setLiveConnected(true)
+        }
       })
-      setLiveConnected(true)
       return () => {
         cancelled = true
         unlisten?.()
@@ -358,7 +383,7 @@ export function DeployTool() {
     setDeploying(true)
     toast.info('Deploy Started')
     try {
-      const config = selectedProfile.config as Record<string, string>
+      const config = normalizeDeployConfig(selectedProfile.config)
       const artifactPath = config.artifactPath
       const targetFolder = config.targetFolder
       if (!artifactPath || !targetFolder) {
@@ -385,8 +410,8 @@ export function DeployTool() {
           user.id,
           artifactPath,
           targetFolder,
-          config.autoBackup !== 'false',
-          config.autoRestart === 'true',
+          config.autoBackup,
+          config.autoRestart,
           config.serverId,
           targetServer?.name || 'Local Folder',
         )
@@ -478,7 +503,9 @@ export function DeployTool() {
             </Card>
 
             <Card className="lg:col-span-2">
-              {selectedProfile ? (
+              {selectedProfile ? (() => {
+                const cfg = normalizeDeployConfig(selectedProfile.config)
+                return (
                 <>
                   <CardTitle>{selectedProfile.name}</CardTitle>
                   <div className="mt-4 space-y-4">
@@ -507,7 +534,7 @@ export function DeployTool() {
                     <div>
                       <label className="block text-sm text-[#888] mb-2">Target Server</label>
                       <select
-                        value={(selectedProfile.config as Record<string, string>).serverId || ''}
+                        value={cfg.serverId || ''}
                         onChange={(e) =>
                           setSelectedProfile({
                             ...selectedProfile,
@@ -527,11 +554,11 @@ export function DeployTool() {
                     <Input
                       label="Target Folder"
                       placeholder={
-                        pteroConfig(servers.find((s) => s.id === (selectedProfile.config as Record<string, string>).serverId) ?? null)
+                        pteroConfig(servers.find((s) => s.id === cfg.serverId) ?? null)
                           ? '/  (absolute path on the remote server)'
                           : 'C:\\path\\to\\folder'
                       }
-                      value={(selectedProfile.config as Record<string, string>).targetFolder || ''}
+                      value={cfg.targetFolder || ''}
                       onChange={(e) =>
                         setSelectedProfile({
                           ...selectedProfile,
@@ -541,7 +568,7 @@ export function DeployTool() {
                     />
                     <Input
                       label="Artifact Path"
-                      value={(selectedProfile.config as Record<string, string>).artifactPath || ''}
+                      value={cfg.artifactPath || ''}
                       onChange={(e) =>
                         setSelectedProfile({
                           ...selectedProfile,
@@ -549,6 +576,36 @@ export function DeployTool() {
                         })
                       }
                     />
+                    <div className="flex flex-wrap gap-6">
+                      <label className="flex items-center gap-2 text-sm text-[#888] cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={cfg.autoBackup}
+                          onChange={(e) =>
+                            setSelectedProfile({
+                              ...selectedProfile,
+                              config: { ...selectedProfile.config, autoBackup: e.target.checked },
+                            })
+                          }
+                          className="rounded border-[#333]"
+                        />
+                        Back up existing file before deploying
+                      </label>
+                      <label className="flex items-center gap-2 text-sm text-[#888] cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={cfg.autoRestart}
+                          onChange={(e) =>
+                            setSelectedProfile({
+                              ...selectedProfile,
+                              config: { ...selectedProfile.config, autoRestart: e.target.checked },
+                            })
+                          }
+                          className="rounded border-[#333]"
+                        />
+                        Restart server after deploying
+                      </label>
+                    </div>
                     <div className="flex gap-3">
                       <Button onClick={() => user && api.deploy.saveProfile(user.id, selectedProfile)}>Save Profile</Button>
                       <Button onClick={deploy} loading={deploying}>
@@ -567,7 +624,8 @@ export function DeployTool() {
                     </div>
                   </div>
                 </>
-              ) : (
+                )
+              })() : (
                 <div className="text-center py-8">
                   <CardDescription>Select or create a deployment profile</CardDescription>
                 </div>

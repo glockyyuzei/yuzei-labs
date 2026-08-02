@@ -121,7 +121,11 @@ fn get_git_branch(path: &Path) -> Option<String> {
     }
 }
 
-fn detect_project_type(path: &Path, gradle_content: &str, settings_content: Option<&str>) -> String {
+fn detect_project_type(
+    path: &Path,
+    gradle_content: &str,
+    settings_content: Option<&str>,
+) -> String {
     let lower = gradle_content.to_lowercase();
     let settings_lower = settings_content.unwrap_or("").to_lowercase();
     let combined = format!("{lower} {settings_lower}");
@@ -218,7 +222,8 @@ pub fn detect_modules(path: String) -> Result<Vec<ModuleInfo>, String> {
         Err(_) => return Ok(Vec::new()),
     };
 
-    let include_re = Regex::new(r"include(?:Project)?\s*\(?([^\n)]*)\)?").map_err(|e| e.to_string())?;
+    let include_re =
+        Regex::new(r"include(?:Project)?\s*\(?([^\n)]*)\)?").map_err(|e| e.to_string())?;
     let token_re = Regex::new(r#"["']([^"']+)["']"#).map_err(|e| e.to_string())?;
 
     let mut modules: Vec<ModuleInfo> = Vec::new();
@@ -289,19 +294,22 @@ pub fn detect_project(path: String) -> Result<ProjectInfo, String> {
                 .to_string()
         });
 
-    let version = read_gradle_property(&gradle_content, "version").unwrap_or_else(|| "1.0.0".into());
+    let version =
+        read_gradle_property(&gradle_content, "version").unwrap_or_else(|| "1.0.0".into());
 
-    let java_version = Regex::new(r#"(?i)JavaVersion\.VERSION_(\d+)|sourceCompatibility\s*=\s*['"]?(?:JavaVersion\.)?(\d+)"#)
-        .ok()
-        .and_then(|re| {
-            re.captures(&gradle_content).and_then(|c| {
-                c.get(1)
-                    .or_else(|| c.get(2))
-                    .map(|m| m.as_str().to_string())
-            })
+    let java_version = Regex::new(
+        r#"(?i)JavaVersion\.VERSION_(\d+)|sourceCompatibility\s*=\s*['"]?(?:JavaVersion\.)?(\d+)"#,
+    )
+    .ok()
+    .and_then(|re| {
+        re.captures(&gradle_content).and_then(|c| {
+            c.get(1)
+                .or_else(|| c.get(2))
+                .map(|m| m.as_str().to_string())
         })
-        .map(|v| format!("{v}"))
-        .unwrap_or_else(|| "17".into());
+    })
+    .map(|v| format!("{v}"))
+    .unwrap_or_else(|| "17".into());
 
     let gradle_version = project_path
         .join("gradle/wrapper/gradle-wrapper.properties")
@@ -320,7 +328,8 @@ pub fn detect_project(path: String) -> Result<ProjectInfo, String> {
         .flatten()
         .unwrap_or_else(|| "8.x".into());
 
-    let project_type = detect_project_type(&project_path, &gradle_content, settings_content.as_deref());
+    let project_type =
+        detect_project_type(&project_path, &gradle_content, settings_content.as_deref());
     let git_branch = get_git_branch(&project_path);
 
     Ok(ProjectInfo {
@@ -380,7 +389,12 @@ pub async fn run_gradle_task(
     version: Option<String>,
     modules: Option<Vec<String>>,
 ) -> Result<BuildResult, String> {
-    if build_manager.active.lock().map_err(|e| e.to_string())?.is_some() {
+    if build_manager
+        .active
+        .lock()
+        .map_err(|e| e.to_string())?
+        .is_some()
+    {
         return Err("A build is already in progress".into());
     }
 
@@ -433,7 +447,9 @@ pub async fn run_gradle_task(
         &serde_json::json!({ "buildId": build_id, "task": task, "args": gradle_args }),
     );
 
-    let mut child = cmd.spawn().map_err(|e| format!("Failed to run Gradle: {e}"))?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("Failed to run Gradle: {e}"))?;
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
@@ -506,11 +522,7 @@ pub async fn run_gradle_task(
     }
 
     let duration_ms = start.elapsed().as_millis() as u64;
-    let combined = format!(
-        "{}\n{}",
-        stdout_lines.join("\n"),
-        stderr_lines.join("\n")
-    );
+    let combined = format!("{}\n{}", stdout_lines.join("\n"), stderr_lines.join("\n"));
 
     let build_status = if cancel_flag.load(Ordering::Relaxed) {
         "BUILD CANCELLED"
@@ -551,7 +563,12 @@ pub async fn run_gradle_task(
             &modules,
         )?;
         if let Some(dir) = output_dir {
-            copy_artifacts_to_output(&artifacts, &dir, &project_info.name, project_version.as_deref())?;
+            copy_artifacts_to_output(
+                &artifacts,
+                &dir,
+                &project_info.name,
+                project_version.as_deref(),
+            )?;
         }
     }
 
@@ -647,7 +664,9 @@ fn copy_artifacts_to_output(
     version: Option<&str>,
 ) -> Result<(), String> {
     let version_dir = version.unwrap_or("latest");
-    let dest_dir = PathBuf::from(output_dir).join(project_name).join(version_dir);
+    let dest_dir = PathBuf::from(output_dir)
+        .join(project_name)
+        .join(version_dir);
     fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
     for artifact in artifacts {
         let dest = dest_dir.join(&artifact.filename);
@@ -665,12 +684,31 @@ pub fn get_build_history(
     status_filter: Option<String>,
 ) -> Result<Vec<BuildHistoryEntry>, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    let fetch_limit = limit.saturating_mul(5).max(limit);
+
+    let q = query.unwrap_or_default().trim().to_lowercase();
+    let status_pattern = match status_filter.as_deref().unwrap_or("all") {
+        "all" | "" => String::new(),
+        "success" => "SUCCESS".to_string(),
+        "failed" => "FAILED".to_string(),
+        "cancelled" => "CANCELLED".to_string(),
+        other => other.to_uppercase(),
+    };
+
     let mut stmt = conn
-        .prepare("SELECT id, project_name, project_path, task, status, duration_ms, version, created_at FROM build_history WHERE user_id = ?1 ORDER BY created_at DESC LIMIT ?2")
+        .prepare(
+            "SELECT id, project_name, project_path, task, status, duration_ms, version, created_at
+             FROM build_history
+             WHERE user_id = ?1
+               AND (?2 = '' OR project_name LIKE '%' || ?2 || '%' OR project_path LIKE '%' || ?2 || '%'
+                    OR task LIKE '%' || ?2 || '%' OR version LIKE '%' || ?2 || '%')
+               AND (?3 = '' OR status LIKE '%' || ?3 || '%')
+             ORDER BY created_at DESC
+             LIMIT ?4",
+        )
         .map_err(|e| e.to_string())?;
+
     let rows = stmt
-        .query_map(params![user_id, fetch_limit], |r| {
+        .query_map(params![user_id, q, status_pattern, limit], |r| {
             Ok(BuildHistoryEntry {
                 id: r.get(0)?,
                 project_name: r.get(1)?,
@@ -686,34 +724,7 @@ pub fn get_build_history(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
-    let q = query.unwrap_or_default().to_lowercase();
-    let status = status_filter.unwrap_or_else(|| "all".into());
-
-    let filtered: Vec<BuildHistoryEntry> = rows
-        .into_iter()
-        .filter(|entry| {
-            let status_match = status == "all"
-                || (status == "success" && entry.status.contains("SUCCESS"))
-                || (status == "failed" && entry.status.contains("FAILED"))
-                || (status == "cancelled" && entry.status.contains("CANCELLED"))
-                || entry.status.to_lowercase().contains(&status.to_lowercase());
-
-            let query_match = q.is_empty()
-                || entry.project_name.to_lowercase().contains(&q)
-                || entry.project_path.to_lowercase().contains(&q)
-                || entry.task.to_lowercase().contains(&q)
-                || entry
-                    .version
-                    .as_ref()
-                    .map(|v| v.to_lowercase().contains(&q))
-                    .unwrap_or(false);
-
-            status_match && query_match
-        })
-        .take(limit as usize)
-        .collect();
-
-    Ok(filtered)
+    Ok(rows)
 }
 
 #[tauri::command]
@@ -759,7 +770,8 @@ pub fn get_artifacts(
         let mut stmt = conn
             .prepare("SELECT id, filename, version, file_path, size_bytes, status, build_time FROM artifacts WHERE user_id = ?1 AND project_path = ?2 ORDER BY build_time DESC")
             .map_err(|e| e.to_string())?;
-        let result = stmt.query_map(params![user_id, path], map_artifact)
+        let result = stmt
+            .query_map(params![user_id, path], map_artifact)
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
@@ -768,7 +780,8 @@ pub fn get_artifacts(
         let mut stmt = conn
             .prepare("SELECT id, filename, version, file_path, size_bytes, status, build_time FROM artifacts WHERE user_id = ?1 ORDER BY build_time DESC LIMIT 50")
             .map_err(|e| e.to_string())?;
-        let result = stmt.query_map(params![user_id], map_artifact)
+        let result = stmt
+            .query_map(params![user_id], map_artifact)
             .map_err(|e| e.to_string())?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
@@ -793,19 +806,31 @@ fn map_artifact(r: &rusqlite::Row) -> rusqlite::Result<ArtifactInfo> {
 pub fn delete_artifact(state: State<'_, DbState>, id: String) -> Result<(), String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     let path: String = conn
-        .query_row("SELECT file_path FROM artifacts WHERE id = ?1", params![id], |r| r.get(0))
+        .query_row(
+            "SELECT file_path FROM artifacts WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
         .map_err(|e| e.to_string())?;
-    fs::remove_file(&path).ok();
+    fs::remove_file(&path).map_err(|e| format!("Failed to delete file: {e}"))?;
     conn.execute("DELETE FROM artifacts WHERE id = ?1", params![id])
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
-pub fn rename_artifact(state: State<'_, DbState>, id: String, new_filename: String) -> Result<ArtifactInfo, String> {
+pub fn rename_artifact(
+    state: State<'_, DbState>,
+    id: String,
+    new_filename: String,
+) -> Result<ArtifactInfo, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     let old_path: String = conn
-        .query_row("SELECT file_path FROM artifacts WHERE id = ?1", params![id], |r| r.get(0))
+        .query_row(
+            "SELECT file_path FROM artifacts WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
         .map_err(|e| e.to_string())?;
     let old = PathBuf::from(&old_path);
     let new_path = old.parent().unwrap().join(&new_filename);
@@ -835,7 +860,11 @@ pub fn save_recent_workspace(
 ) -> Result<(), String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     let now = Utc::now().to_rfc3339();
-    conn.execute("DELETE FROM recent_workspaces WHERE user_id = ?1 AND path = ?2", params![user_id, path]).ok();
+    conn.execute(
+        "DELETE FROM recent_workspaces WHERE user_id = ?1 AND path = ?2",
+        params![user_id, path],
+    )
+    .ok();
     conn.execute(
         "INSERT INTO recent_workspaces (user_id, path, name, project_type, version, opened_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![user_id, path, name, project_type, version, now],
@@ -874,7 +903,8 @@ pub fn get_recent_workspaces(
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 #[derive(Debug, Deserialize)]
@@ -917,7 +947,11 @@ pub async fn send_discord_webhook(payload: DiscordWebhookPayload) -> Result<(), 
                 if can_attach {
                     format!("{} (attached)", a.filename)
                 } else {
-                    format!("{} ({:.1} MB)", a.filename, a.size_bytes as f64 / (1024.0 * 1024.0))
+                    format!(
+                        "{} ({:.1} MB)",
+                        a.filename,
+                        a.size_bytes as f64 / (1024.0 * 1024.0)
+                    )
                 }
             })
             .collect::<Vec<_>>()
@@ -947,8 +981,7 @@ pub async fn send_discord_webhook(payload: DiscordWebhookPayload) -> Result<(), 
     let client = reqwest::Client::new();
 
     let response = if can_attach {
-        let mut form = reqwest::multipart::Form::new()
-            .text("payload_json", body.to_string());
+        let mut form = reqwest::multipart::Form::new().text("payload_json", body.to_string());
 
         for (i, artifact) in payload.artifacts.iter().enumerate() {
             let bytes = fs::read(&artifact.file_path)
@@ -960,7 +993,11 @@ pub async fn send_discord_webhook(payload: DiscordWebhookPayload) -> Result<(), 
             form = form.part(format!("files[{i}]"), part);
         }
 
-        client.post(&payload.webhook_url).multipart(form).send().await
+        client
+            .post(&payload.webhook_url)
+            .multipart(form)
+            .send()
+            .await
     } else {
         if !payload.artifacts.is_empty() {
             log::warn!(
@@ -992,6 +1029,60 @@ pub fn find_jar_files(path: String) -> Result<Vec<String>, String> {
     Ok(jars)
 }
 
+/// Registers a jar discovered via find_jar_files as a real tracked artifact,
+/// so "Scan for JARs" in Generated Files can actually surface jars built
+/// outside of a normal Yuzei Labs build (e.g. from before the app was
+/// tracking them, or built by a bare `gradlew` invocation) instead of just
+/// listing paths nobody can do anything with.
+#[tauri::command]
+pub fn import_jar_as_artifact(
+    state: State<'_, DbState>,
+    user_id: String,
+    project_path: String,
+    file_path: String,
+) -> Result<ArtifactInfo, String> {
+    let path = PathBuf::from(&file_path);
+    if !path.exists() {
+        return Err("File no longer exists".into());
+    }
+    let filename = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .ok_or("Invalid file path")?;
+    let size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+
+    let already_tracked: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM artifacts WHERE user_id = ?1 AND file_path = ?2)",
+            params![user_id, file_path],
+            |r| r.get(0),
+        )
+        .unwrap_or(false);
+    if already_tracked {
+        return Err("Already tracked as an artifact".into());
+    }
+
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO artifacts (id, user_id, project_path, filename, file_path, size_bytes, status, build_time, version) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![id, user_id, project_path, filename, file_path, size as i64, "imported", now, Option::<String>::None],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(ArtifactInfo {
+        id,
+        filename,
+        version: None,
+        file_path,
+        size_bytes: size,
+        status: "imported".into(),
+        build_time: now,
+    })
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DetectedIde {
@@ -1013,14 +1104,17 @@ fn resolve_ide_executable(ide: &str) -> Option<PathBuf> {
 
     if cfg!(windows) {
         let local_appdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
-        let program_files = std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".into());
+        let program_files =
+            std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".into());
         let program_files_x86 =
             std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".into());
 
         match ide {
             "intellij" => {
-                candidates.push(PathBuf::from(&local_appdata).join("Programs\\IDEA U\\bin\\idea64.exe"));
-                candidates.push(PathBuf::from(&local_appdata).join("Programs\\IDEA C\\bin\\idea64.exe"));
+                candidates
+                    .push(PathBuf::from(&local_appdata).join("Programs\\IDEA U\\bin\\idea64.exe"));
+                candidates
+                    .push(PathBuf::from(&local_appdata).join("Programs\\IDEA C\\bin\\idea64.exe"));
                 // Fall back to scanning the JetBrains install root for any IDEA version folder.
                 if let Ok(entries) = fs::read_dir(PathBuf::from(&program_files).join("JetBrains")) {
                     for entry in entries.flatten() {
@@ -1038,7 +1132,8 @@ fn resolve_ide_executable(ide: &str) -> Option<PathBuf> {
                     PathBuf::from(&local_appdata).join("Programs\\Microsoft VS Code\\Code.exe"),
                 );
                 candidates.push(PathBuf::from(&program_files).join("Microsoft VS Code\\Code.exe"));
-                candidates.push(PathBuf::from(&program_files_x86).join("Microsoft VS Code\\Code.exe"));
+                candidates
+                    .push(PathBuf::from(&program_files_x86).join("Microsoft VS Code\\Code.exe"));
             }
             _ => {}
         }
@@ -1114,12 +1209,18 @@ pub fn open_in_ide(project_path: String, ide: String) -> Result<(), String> {
                 StdCommand::new("cmd")
                     .args(["/C", "start", "", "idea64.exe", &project_path])
                     .spawn()
-                    .map_err(|_| "IntelliJ IDEA was not found. Install it or add it to your PATH.".to_string())?;
+                    .map_err(|_| {
+                        "IntelliJ IDEA was not found. Install it or add it to your PATH."
+                            .to_string()
+                    })?;
             } else {
                 StdCommand::new("idea")
                     .arg(&project_path)
                     .spawn()
-                    .map_err(|_| "IntelliJ IDEA was not found. Install it or add it to your PATH.".to_string())?;
+                    .map_err(|_| {
+                        "IntelliJ IDEA was not found. Install it or add it to your PATH."
+                            .to_string()
+                    })?;
             }
         }
         "eclipse" => {
@@ -1132,12 +1233,16 @@ pub fn open_in_ide(project_path: String, ide: String) -> Result<(), String> {
                 StdCommand::new("cmd")
                     .args(["/C", "start", "", "eclipse.exe", "-data", &project_path])
                     .spawn()
-                    .map_err(|_| "Eclipse IDE was not found. Install it or add it to your PATH.".to_string())?;
+                    .map_err(|_| {
+                        "Eclipse IDE was not found. Install it or add it to your PATH.".to_string()
+                    })?;
             } else {
                 StdCommand::new("eclipse")
                     .arg(&project_path)
                     .spawn()
-                    .map_err(|_| "Eclipse IDE was not found. Install it or add it to your PATH.".to_string())?;
+                    .map_err(|_| {
+                        "Eclipse IDE was not found. Install it or add it to your PATH.".to_string()
+                    })?;
             }
         }
         "vscode" => {
@@ -1145,7 +1250,10 @@ pub fn open_in_ide(project_path: String, ide: String) -> Result<(), String> {
             StdCommand::new(launch)
                 .arg(&project_path)
                 .spawn()
-                .map_err(|_| "Visual Studio Code was not found. Install it or add it to your PATH.".to_string())?;
+                .map_err(|_| {
+                    "Visual Studio Code was not found. Install it or add it to your PATH."
+                        .to_string()
+                })?;
         }
         _ => return Err(format!("Unknown IDE: {ide}")),
     }
@@ -1221,8 +1329,8 @@ pub fn update_project_version(
     let gradle_file = gradle_file_path(&path)?;
     let content = fs::read_to_string(&gradle_file).map_err(|e| e.to_string())?;
 
-    let version_re = Regex::new(r#"(?m)(^\s*version\s*=\s*['"])([^'"]+)(['"])"#)
-        .map_err(|e| e.to_string())?;
+    let version_re =
+        Regex::new(r#"(?m)(^\s*version\s*=\s*['"])([^'"]+)(['"])"#).map_err(|e| e.to_string())?;
     let new_content = if version_re.is_match(&content) {
         version_re
             .replace(&content, format!("${{1}}{version}${{3}}"))
@@ -1257,13 +1365,20 @@ pub fn get_version_history(
         .query_map(params![project_path], |r| {
             let mut map = HashMap::new();
             map.insert("version".into(), r.get::<_, String>(0)?);
-            map.insert("developer".into(), r.get::<_, Option<String>>(1)?.unwrap_or_default());
-            map.insert("buildNumber".into(), r.get::<_, Option<String>>(2)?.unwrap_or_default());
+            map.insert(
+                "developer".into(),
+                r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+            );
+            map.insert(
+                "buildNumber".into(),
+                r.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            );
             map.insert("createdAt".into(), r.get::<_, String>(3)?);
             Ok(map)
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

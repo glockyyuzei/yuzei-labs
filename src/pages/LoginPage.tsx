@@ -71,9 +71,6 @@ export function LoginPage() {
                 />
                 Remember Me
               </label>
-              <button type="button" className="text-sm text-[#888] hover:text-white transition-colors">
-                Forgot Password?
-              </button>
             </div>
 
             {error && <p className="text-sm text-red-400">{error}</p>}

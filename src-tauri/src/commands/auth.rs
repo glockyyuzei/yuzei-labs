@@ -58,6 +58,7 @@ pub fn register_user(
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     let token = Uuid::new_v4().to_string();
+    let expires_at = (Utc::now() + chrono::Duration::days(30)).to_rfc3339();
 
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     conn.execute(
@@ -73,8 +74,8 @@ pub fn register_user(
     })?;
 
     conn.execute(
-        "INSERT INTO sessions (token, user_id, remember_me, created_at) VALUES (?1, ?2, ?3, ?4)",
-        params![token, id, 1, now],
+        "INSERT INTO sessions (token, user_id, remember_me, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![token, id, 1, now, expires_at],
     )
     .map_err(|e| e.to_string())?;
 
@@ -92,7 +93,10 @@ pub fn register_user(
 }
 
 #[tauri::command]
-pub fn login_user(state: tauri::State<'_, DbState>, req: LoginRequest) -> Result<AuthResponse, String> {
+pub fn login_user(
+    state: tauri::State<'_, DbState>,
+    req: LoginRequest,
+) -> Result<AuthResponse, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     let row: Result<(String, String, String, String, String, String, Option<String>), _> = conn.query_row(
         "SELECT id, username, email, password_hash, avatar, joined_at, last_login FROM users WHERE username = ?1 OR email = ?1",
@@ -110,7 +114,8 @@ pub fn login_user(state: tauri::State<'_, DbState>, req: LoginRequest) -> Result
         },
     );
 
-    let (id, username, email, hash, avatar, joined_at, _) = row.map_err(|_| "Invalid credentials")?;
+    let (id, username, email, hash, avatar, joined_at, _) =
+        row.map_err(|_| "Invalid credentials")?;
 
     if !auth::verify_password(&req.password, &hash)? {
         return Err("Invalid credentials".into());
@@ -125,9 +130,15 @@ pub fn login_user(state: tauri::State<'_, DbState>, req: LoginRequest) -> Result
 
     let token = Uuid::new_v4().to_string();
     let remember = if req.remember_me { 1 } else { 0 };
+    let expires_at = if req.remember_me {
+        Utc::now() + chrono::Duration::days(30)
+    } else {
+        Utc::now() + chrono::Duration::hours(24)
+    }
+    .to_rfc3339();
     conn.execute(
-        "INSERT INTO sessions (token, user_id, remember_me, created_at) VALUES (?1, ?2, ?3, ?4)",
-        params![token, id, remember, now],
+        "INSERT INTO sessions (token, user_id, remember_me, created_at, expires_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![token, id, remember, now, expires_at],
     )
     .map_err(|e| e.to_string())?;
 
@@ -150,6 +161,26 @@ pub fn validate_session(
     token: String,
 ) -> Result<UserProfile, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
+
+    let expires_at: Option<String> = conn
+        .query_row(
+            "SELECT expires_at FROM sessions WHERE token = ?1",
+            params![token],
+            |r| r.get(0),
+        )
+        .map_err(|_| "Session expired".to_string())?;
+
+    if let Some(expires_at) = expires_at {
+        let expired = chrono::DateTime::parse_from_rfc3339(&expires_at)
+            .map(|t| t < Utc::now())
+            .unwrap_or(false);
+        if expired {
+            conn.execute("DELETE FROM sessions WHERE token = ?1", params![token])
+                .map_err(|e| e.to_string())?;
+            return Err("Session expired".into());
+        }
+    }
+
     conn.query_row(
         "SELECT u.id, u.username, u.email, u.avatar, u.joined_at, u.last_login
          FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = ?1",

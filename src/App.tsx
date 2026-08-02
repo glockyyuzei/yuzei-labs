@@ -51,6 +51,10 @@ function AppRoutes() {
     // the Dashboard and status bar without waiting on the Publisher tool.
     if (isAuthenticated && user) {
       usePublisherStore.getState().init(user.id)
+    } else {
+      // Logged out — release the build-output/started/finished listeners
+      // instead of leaving them attached indefinitely.
+      usePublisherStore.getState().teardown()
     }
   }, [isAuthenticated, user])
 

@@ -119,6 +119,7 @@ export function PublisherDashboard() {
                   version={pub.editVersion}
                   developer={pub.editDeveloper}
                   buildNumber={pub.editBuildNumber}
+                  projectPath={pub.project?.workspacePath}
                   onVersionChange={pub.setEditVersion}
                   onDeveloperChange={pub.setEditDeveloper}
                   onBuildNumberChange={pub.setEditBuildNumber}
@@ -168,6 +169,8 @@ export function PublisherDashboard() {
                 <ArtifactsPanel
                   artifacts={pub.artifacts}
                   onRefresh={() => pub.refreshArtifacts(user.id)}
+                  userId={user.id}
+                  projectPath={pub.project?.workspacePath}
                 />
               </div>
             </div>

@@ -22,9 +22,9 @@ use commands::pterodactyl::{
 use commands::publisher::{
     cancel_build, delete_artifact, detect_installed_ides, detect_modules, detect_project,
     find_jar_files, get_artifacts, get_build_history, get_last_build_info, get_recent_workspaces,
-    get_release_notes, get_version_history, open_folder, open_in_ide, rename_artifact,
-    reveal_in_explorer, run_gradle_task, save_recent_workspace, save_release_notes,
-    send_discord_webhook, update_project_version, BuildManager,
+    get_release_notes, get_version_history, import_jar_as_artifact, open_folder, open_in_ide,
+    rename_artifact, reveal_in_explorer, run_gradle_task, save_recent_workspace,
+    save_release_notes, send_discord_webhook, update_project_version, BuildManager,
 };
 use commands::settings::{
     get_activity, get_recent_tools, get_settings, log_activity, record_tool_usage, set_setting,
@@ -85,6 +85,7 @@ pub fn run() {
             get_recent_workspaces,
             send_discord_webhook,
             find_jar_files,
+            import_jar_as_artifact,
             open_in_ide,
             detect_installed_ides,
             reveal_in_explorer,
