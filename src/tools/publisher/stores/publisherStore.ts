@@ -46,10 +46,12 @@ interface PublisherState {
   outputFolder: string | null
   initialized: boolean
   listenersAttached: boolean
+  unlistenFns: (() => void) | null
 
   getSettings: () => PublisherSettings
   init: (userId: string) => Promise<void>
   attachListeners: () => Promise<() => void>
+  teardown: () => void
   loadWorkspace: (userId: string, path: string) => Promise<void>
   openWorkspace: (userId: string) => Promise<void>
   loadDefaultWorkspace: (userId: string) => Promise<void>
@@ -108,13 +110,15 @@ export const usePublisherStore = create<PublisherState>((set, get) => ({
   outputFolder: null,
   initialized: false,
   listenersAttached: false,
+  unlistenFns: null,
 
   getSettings: readPublisherSettings,
 
   init: async (userId) => {
     const pub = get()
     if (!pub.listenersAttached) {
-      await pub.attachListeners()
+      const unlisten = await pub.attachListeners()
+      set({ unlistenFns: unlisten })
     }
     await pub.loadDefaultWorkspace(userId)
     await pub.refreshHistory(userId)
@@ -137,6 +141,30 @@ export const usePublisherStore = create<PublisherState>((set, get) => ({
       unlistenStart()
       unlistenFinish()
     }
+  },
+
+  teardown: () => {
+    const { unlistenFns } = get()
+    unlistenFns?.()
+    set({
+      listenersAttached: false,
+      unlistenFns: null,
+      initialized: false,
+      project: null,
+      modules: [],
+      selectedModules: [],
+      building: false,
+      consoleLines: [],
+      artifacts: [],
+      history: [],
+      lastBuildInfo: null,
+      lastBuild: null,
+      releaseNotes: '',
+      editVersion: '',
+      editDeveloper: '',
+      editBuildNumber: '',
+      outputFolder: null,
+    })
   },
 
   loadWorkspace: async (userId, path) => {
