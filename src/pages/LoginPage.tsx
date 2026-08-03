@@ -49,7 +49,7 @@ export function LoginPage() {
               label="Username or Email"
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="glockyyuzei"
+              placeholder="example@gmail.com"
               required
             />
             <Input
