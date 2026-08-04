@@ -171,7 +171,9 @@ fn analyze_local(input: &str) -> Option<AnalysisResult> {
         if input.contains(pattern) {
             let exception = extract_exception_type(input).unwrap_or_else(|| name.to_string());
             return Some(AnalysisResult {
-                summary: format!("Detected {exception} — a common issue in Java/Minecraft development."),
+                summary: format!(
+                    "Detected {exception} — a common issue in Java/Minecraft development."
+                ),
                 root_cause: root_cause.to_string(),
                 suggested_fixes: fixes.iter().map(|s| s.to_string()).collect(),
                 confidence: 92,
@@ -200,7 +202,9 @@ pub fn analyze_offline(input: String) -> Result<AnalysisResult, String> {
 
     Ok(AnalysisResult {
         summary: format!("Detected {exception}. No exact match in local knowledge base."),
-        root_cause: "This error requires deeper analysis. Consider using AI analysis for detailed insights.".into(),
+        root_cause:
+            "This error requires deeper analysis. Consider using AI analysis for detailed insights."
+                .into(),
         suggested_fixes: vec![
             "Review the full stack trace from bottom to top".into(),
             "Check the first 'Caused by:' section".into(),
@@ -261,36 +265,50 @@ pub async fn analyze_with_ai(req: AiAnalysisRequest) -> Result<AnalysisResult, S
 }
 
 fn resolve_provider(req: &AiAnalysisRequest) -> Result<(String, String), String> {
-    let model = req.model.clone().unwrap_or_else(|| match req.provider.as_str() {
-        "openai" => "gpt-4o-mini".into(),
-        "anthropic" => "claude-3-5-haiku-20241022".into(),
-        "gemini" => "google/gemini-2.0-flash-001".into(),
-        "openrouter" => "anthropic/claude-3.5-sonnet".into(),
-        "ollama" => "llama3.2".into(),
-        "lmstudio" => "local-model".into(),
-        _ => "gpt-4o-mini".into(),
-    });
+    let model = req
+        .model
+        .clone()
+        .unwrap_or_else(|| match req.provider.as_str() {
+            "openai" => "gpt-4o-mini".into(),
+            "anthropic" => "claude-3-5-haiku-20241022".into(),
+            "gemini" => "google/gemini-2.0-flash-001".into(),
+            "openrouter" => "anthropic/claude-3.5-sonnet".into(),
+            "ollama" => "llama3.2".into(),
+            "lmstudio" => "local-model".into(),
+            // OmniRoute has its own auto-routing across whatever providers are
+            // connected in its dashboard — "auto" lets it pick, same idea as
+            // OpenRouter's :auto suffix but built into OmniRoute itself.
+            "omniroute" => "auto".into(),
+            _ => "gpt-4o-mini".into(),
+        });
 
     if req.provider == "custom" && req.base_url.is_none() {
         return Err("Custom provider requires baseUrl".into());
     }
 
-    let url = req.base_url.clone().unwrap_or_else(|| match req.provider.as_str() {
-        "openai" => "https://api.openai.com/v1/chat/completions".into(),
-        "openrouter" => "https://openrouter.ai/api/v1/chat/completions".into(),
-        "gemini" => "https://openrouter.ai/api/v1/chat/completions".into(),
-        "anthropic" => "https://openrouter.ai/api/v1/chat/completions".into(),
-        "ollama" => "http://localhost:11434/v1/chat/completions".into(),
-        "lmstudio" => "http://localhost:1234/v1/chat/completions".into(),
-        _ => "https://openrouter.ai/api/v1/chat/completions".into(),
-    });
+    let url = req
+        .base_url
+        .clone()
+        .unwrap_or_else(|| match req.provider.as_str() {
+            "openai" => "https://api.openai.com/v1/chat/completions".into(),
+            "openrouter" => "https://openrouter.ai/api/v1/chat/completions".into(),
+            "gemini" => "https://openrouter.ai/api/v1/chat/completions".into(),
+            "anthropic" => "https://openrouter.ai/api/v1/chat/completions".into(),
+            "ollama" => "http://localhost:11434/v1/chat/completions".into(),
+            "lmstudio" => "http://localhost:1234/v1/chat/completions".into(),
+            // Default port per OmniRoute's own docs; user's dashboard may be
+            // configured on a different port via PORT env var, in which case
+            // they'd override this with a custom baseUrl anyway.
+            "omniroute" => "http://localhost:20128/v1/chat/completions".into(),
+            _ => "https://openrouter.ai/api/v1/chat/completions".into(),
+        });
 
     Ok((url, model))
 }
 
 fn parse_ai_response(response_text: &str, input: &str) -> Result<AnalysisResult, String> {
-    let json: serde_json::Value =
-        serde_json::from_str(response_text).map_err(|e| format!("Invalid AI response JSON: {e}"))?;
+    let json: serde_json::Value = serde_json::from_str(response_text)
+        .map_err(|e| format!("Invalid AI response JSON: {e}"))?;
 
     let content = json["choices"][0]["message"]["content"]
         .as_str()

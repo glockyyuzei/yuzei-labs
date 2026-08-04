@@ -133,6 +133,7 @@ export function InspectorTool() {
               <option value="gemini">Gemini</option>
               <option value="ollama">Ollama</option>
               <option value="lmstudio">LM Studio</option>
+              <option value="omniroute">OmniRoute</option>
             </select>
           </div>
         }

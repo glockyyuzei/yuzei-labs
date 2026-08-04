@@ -139,6 +139,7 @@ export function SettingsPage() {
                   <option value="gemini">Google Gemini</option>
                   <option value="ollama">Ollama</option>
                   <option value="lmstudio">LM Studio</option>
+                  <option value="omniroute">OmniRoute (local gateway)</option>
                   <option value="custom">Custom OpenAI-Compatible</option>
                 </select>
               </div>
