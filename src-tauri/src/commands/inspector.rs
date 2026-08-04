@@ -225,12 +225,6 @@ pub async fn analyze_with_ai(req: AiAnalysisRequest) -> Result<AnalysisResult, S
         return Err("No input provided".into());
     }
 
-    if let Some(local) = analyze_local(&req.input) {
-        if local.confidence >= 90 {
-            return Ok(local);
-        }
-    }
-
     let (url, model) = resolve_provider(&req)?;
 
     let system_prompt = "You are an expert Java and Minecraft mod/plugin developer assistant. Analyze the error and respond ONLY with valid JSON in this exact format: {\"summary\":\"...\",\"rootCause\":\"...\",\"suggestedFixes\":[\"...\"],\"confidence\":85,\"relatedFiles\":[\"...\"]}";
