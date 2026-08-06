@@ -137,7 +137,8 @@ pub fn get_deployment_profiles(
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -179,7 +180,10 @@ pub fn save_server(
 }
 
 #[tauri::command]
-pub fn get_servers(state: State<'_, DbState>, user_id: String) -> Result<Vec<ServerConfig>, String> {
+pub fn get_servers(
+    state: State<'_, DbState>,
+    user_id: String,
+) -> Result<Vec<ServerConfig>, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare("SELECT id, name, server_folder, mods_folder, plugins_folder, java_version, startup_script, shutdown_script, working_directory, config, created_at FROM servers WHERE user_id = ?1")
@@ -202,7 +206,8 @@ pub fn get_servers(state: State<'_, DbState>, user_id: String) -> Result<Vec<Ser
             })
         })
         .map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -241,7 +246,11 @@ pub fn list_directory(path: String) -> Result<Vec<FileEntry>, String> {
             modified,
         });
     }
-    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
     Ok(entries)
 }
 
@@ -365,13 +374,12 @@ pub async fn deploy_artifact(
         fs::copy(&dest, backup_dir.join(backup_name)).ok();
     }
 
-    for entry in fs::read_dir(&target).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.ends_with(".jar") && name != artifact_name {
-            fs::remove_file(entry.path()).ok();
-        }
-    }
+    // NOTE: this used to also delete every *other* .jar in the target
+    // folder that didn't share this exact filename. For an app whose whole
+    // point is deploying multiple different modules into the same
+    // mods/plugins folder, that silently wiped out every other module's
+    // jar on every single deploy. Only the exact same-named file (backed
+    // up above, then overwritten below) is ever touched now.
 
     if let Err(e) = fs::copy(&artifact_path, &dest) {
         if let Ok(conn) = state.conn.lock() {
@@ -390,7 +398,7 @@ pub async fn deploy_artifact(
 
     if auto_restart {
         if let Some(sid) = &server_id {
-            restart_server_internal(sid, &processes)?;
+            restart_server_internal(sid, &state, &processes, &app)?;
         }
     }
 
@@ -416,16 +424,60 @@ pub async fn deploy_artifact(
     Ok(result)
 }
 
-fn restart_server_internal(server_id: &str, processes: &Arc<ServerProcesses>) -> Result<(), String> {
-    if let Ok(map) = processes.processes.lock() {
-        if let Some(handle) = map.get(server_id) {
-            kill_process(handle.pid);
-        }
+fn fetch_server_config(
+    state: &State<'_, DbState>,
+    server_id: &str,
+) -> Result<ServerConfig, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    conn.query_row(
+        "SELECT id, name, server_folder, mods_folder, plugins_folder, java_version, startup_script, shutdown_script, working_directory, config, created_at FROM servers WHERE id = ?1",
+        params![server_id],
+        |r| {
+            let config_str: String = r.get(9)?;
+            Ok(ServerConfig {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                server_folder: r.get(2)?,
+                mods_folder: r.get(3)?,
+                plugins_folder: r.get(4)?,
+                java_version: r.get(5)?,
+                startup_script: r.get(6)?,
+                shutdown_script: r.get(7)?,
+                working_directory: r.get(8)?,
+                config: serde_json::from_str(&config_str).unwrap_or(serde_json::json!({})),
+                created_at: r.get(10)?,
+            })
+        },
+    )
+    .map_err(|_| "Server not found".to_string())
+}
+
+/// Actually restarts the server — kills the current process, waits briefly
+/// for the OS to release its handles, then respawns it. The previous
+/// version of this function only ever killed the process and never brought
+/// it back up, despite every caller (deploy_artifact's "restart after
+/// deploy") treating it as a real restart.
+fn restart_server_internal(
+    server_id: &str,
+    state: &State<'_, DbState>,
+    processes: &Arc<ServerProcesses>,
+    app: &AppHandle,
+) -> Result<(), String> {
+    let pid = {
+        let mut map = processes.processes.lock().map_err(|e| e.to_string())?;
+        map.remove(server_id).map(|h| h.pid)
+    };
+    if let Some(pid) = pid {
+        kill_process(pid);
+        std::thread::sleep(std::time::Duration::from_secs(2));
     }
+
+    let server = fetch_server_config(state, server_id)?;
+    spawn_server(&server, processes, app)?;
     Ok(())
 }
 
-fn kill_process(pid: u32) {
+pub(crate) fn kill_process(pid: u32) {
     #[cfg(windows)]
     {
         let _ = Command::new("taskkill")
@@ -444,25 +496,33 @@ pub fn start_server(
     processes: State<'_, Arc<ServerProcesses>>,
     app: AppHandle,
 ) -> Result<u32, String> {
+    spawn_server(&server, &processes, &app)
+}
+
+pub(crate) fn spawn_server(
+    server: &ServerConfig,
+    processes: &Arc<ServerProcesses>,
+    app: &AppHandle,
+) -> Result<u32, String> {
     let work_dir = server
         .working_directory
         .clone()
         .unwrap_or_else(|| server.server_folder.clone());
 
-    let script = server
-        .startup_script
-        .clone()
-        .unwrap_or_else(|| {
-            if cfg!(windows) {
-                "start.bat".into()
-            } else {
-                "start.sh".into()
-            }
-        });
+    let script = server.startup_script.clone().unwrap_or_else(|| {
+        if cfg!(windows) {
+            "start.bat".into()
+        } else {
+            "start.sh".into()
+        }
+    });
 
     let script_path = PathBuf::from(&work_dir).join(&script);
     if !script_path.exists() {
-        return Err(format!("Startup script not found: {}", script_path.display()));
+        return Err(format!(
+            "Startup script not found: {}",
+            script_path.display()
+        ));
     }
 
     let mut cmd = if cfg!(windows) {
@@ -586,7 +646,7 @@ pub fn send_server_command(
 /// java.exe underneath it. Measuring cmd.exe directly would give small,
 /// plausible-but-wrong numbers, so this walks down to the real child
 /// process before reporting anything.
-fn resolve_java_pid(wrapper_pid: u32) -> Option<u32> {
+pub(crate) fn resolve_java_pid(wrapper_pid: u32) -> Option<u32> {
     if !cfg!(windows) {
         return None;
     }
@@ -600,7 +660,10 @@ fn resolve_java_pid(wrapper_pid: u32) -> Option<u32> {
     if !output.status.success() {
         return None;
     }
-    String::from_utf8_lossy(&output.stdout).trim().parse::<u32>().ok()
+    String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse::<u32>()
+        .ok()
 }
 
 /// Queries real RAM + CPU% for a PID via PowerShell. CPU comes back from
@@ -608,7 +671,7 @@ fn resolve_java_pid(wrapper_pid: u32) -> Option<u32> {
 /// using the last sample stored per server (see ServerProcesses.cpu_samples).
 /// Any failure at any step returns None rather than panicking or faking a
 /// number — callers fall back to 0/unavailable.
-fn query_local_process_stats(
+pub(crate) fn query_local_process_stats(
     pid: u32,
     server_id: &str,
     processes: &Arc<ServerProcesses>,
@@ -653,7 +716,7 @@ fn query_local_process_stats(
     Some((ram_mb, cpu_percent as f32))
 }
 
-fn query_total_system_ram_mb() -> Option<f32> {
+pub(crate) fn query_total_system_ram_mb() -> Option<f32> {
     if !cfg!(windows) {
         return None;
     }
@@ -669,7 +732,10 @@ fn query_total_system_ram_mb() -> Option<f32> {
     if !output.status.success() {
         return None;
     }
-    let bytes: f64 = String::from_utf8_lossy(&output.stdout).trim().parse().ok()?;
+    let bytes: f64 = String::from_utf8_lossy(&output.stdout)
+        .trim()
+        .parse()
+        .ok()?;
     Some((bytes / (1024.0 * 1024.0)) as f32)
 }
 
@@ -694,7 +760,11 @@ pub fn get_server_status(
     Ok(ServerStatus {
         id: server.id.clone(),
         name: server.name.clone(),
-        status: if is_running { "Online".into() } else { "Offline".into() },
+        status: if is_running {
+            "Online".into()
+        } else {
+            "Offline".into()
+        },
         online_players: 0,
         max_players: 0,
         uptime_secs: 0,
@@ -740,13 +810,12 @@ pub fn create_server_id() -> String {
 #[tauri::command]
 pub fn backup_server_folder(server_folder: String) -> Result<String, String> {
     let src = PathBuf::from(&server_folder);
-    let backup_name = format!(
-        "backup_{}",
-        Utc::now().format("%Y%m%d_%H%M%S")
-    );
-    let dest = src.parent()
-        .unwrap_or(Path::new("."))
-        .join(format!("{}_{}", src.file_name().unwrap().to_string_lossy(), backup_name));
+    let backup_name = format!("backup_{}", Utc::now().format("%Y%m%d_%H%M%S"));
+    let dest = src.parent().unwrap_or(Path::new(".")).join(format!(
+        "{}_{}",
+        src.file_name().unwrap().to_string_lossy(),
+        backup_name
+    ));
 
     copy_dir_recursive(&src, &dest)?;
     Ok(dest.to_string_lossy().to_string())

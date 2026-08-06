@@ -146,6 +146,57 @@ export interface FileEntry {
   modified: string
 }
 
+export interface HostedServerConfig {
+  id: string
+  name: string
+  serverFolder: string
+  serverType: string
+  jarPath: string
+  javaPath?: string
+  minMemoryMb: number
+  maxMemoryMb: number
+  extraJvmArgs?: string
+  startupScriptPath: string
+  cpuLimitPercent?: number
+  rconPort?: number
+  rconPassword?: string
+  envVars?: string
+  createdAt: string
+}
+
+export interface DetectedJar {
+  path: string
+  filename: string
+  serverType: string
+  confidence: number
+}
+
+export interface StartupScriptDraft {
+  serverFolder: string
+  jarPath: string
+  javaPath?: string
+  minMemoryMb: number
+  maxMemoryMb: number
+  extraJvmArgs?: string
+}
+
+export interface PluginEntry {
+  name: string
+  path: string
+  enabled: boolean
+  sizeBytes: number
+}
+
+export interface ScheduledTask {
+  id: string
+  serverId: string
+  taskType: 'restart' | 'backup'
+  intervalMinutes: number
+  lastRunAt?: string
+  enabled: boolean
+  createdAt: string
+}
+
 export interface DeployHistoryEntry {
   id: string
   serverName: string
@@ -383,5 +434,28 @@ export const api = {
     chat: (messages: Array<{ role: string; content: string }>, provider: string, apiKey: string, model?: string, baseUrl?: string) =>
       invoke<string>('ai_chat', { messages, provider, apiKey, model, baseUrl }),
     readFile: (path: string) => invoke<string>('read_file_content', { path }),
+  },
+  selfhost: {
+    saveServer: (userId: string, server: HostedServerConfig) =>
+      invoke<HostedServerConfig>('save_hosted_server', { userId, server }),
+    getServers: (userId: string) => invoke<HostedServerConfig[]>('get_hosted_servers', { userId }),
+    deleteServer: (id: string) => invoke<void>('delete_hosted_server', { id }),
+    detectJar: (folder: string) => invoke<DetectedJar[]>('detect_server_jar', { folder }),
+    generateStartupScript: (draft: StartupScriptDraft) =>
+      invoke<string>('generate_startup_script', { draft }),
+    startServer: (id: string) => invoke<number>('start_hosted_server', { id }),
+    stopServer: (id: string) => invoke<void>('stop_hosted_server', { id }),
+    getStatus: (id: string) => invoke<ServerStatus>('get_hosted_server_status', { id }),
+    rconCommand: (port: number, password: string, command: string) =>
+      invoke<string>('rcon_command', { port, password, command }),
+    listPlugins: (folder: string) => invoke<PluginEntry[]>('list_plugins', { folder }),
+    togglePlugin: (path: string, enable: boolean) =>
+      invoke<string>('toggle_plugin', { path, enable }),
+    saveScheduledTask: (task: ScheduledTask) => invoke<ScheduledTask>('save_scheduled_task', { task }),
+    getScheduledTasks: (serverId: string) =>
+      invoke<ScheduledTask[]>('get_scheduled_tasks', { serverId }),
+    deleteScheduledTask: (id: string) => invoke<void>('delete_scheduled_task', { id }),
+    runBackupNow: (serverId: string, backupDir: string) =>
+      invoke<string>('run_backup_now', { serverId, backupDir }),
   },
 }

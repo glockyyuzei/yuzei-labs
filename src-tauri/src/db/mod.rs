@@ -154,6 +154,43 @@ fn init_schema(conn: &Connection) -> Result<()> {
             message TEXT,
             created_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS hosted_servers (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            server_folder TEXT NOT NULL,
+            server_type TEXT NOT NULL,
+            jar_path TEXT NOT NULL,
+            java_path TEXT,
+            min_memory_mb INTEGER NOT NULL DEFAULT 1024,
+            max_memory_mb INTEGER NOT NULL DEFAULT 2048,
+            extra_jvm_args TEXT,
+            startup_script_path TEXT NOT NULL,
+            cpu_limit_percent INTEGER,
+            rcon_port INTEGER,
+            rcon_password TEXT,
+            env_vars TEXT,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS scheduled_tasks (
+            id TEXT PRIMARY KEY,
+            server_id TEXT NOT NULL REFERENCES hosted_servers(id) ON DELETE CASCADE,
+            task_type TEXT NOT NULL,
+            interval_minutes INTEGER NOT NULL,
+            last_run_at TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS hosted_server_backups (
+            id TEXT PRIMARY KEY,
+            server_id TEXT NOT NULL REFERENCES hosted_servers(id) ON DELETE CASCADE,
+            file_path TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        );
         ",
     )?;
     migrate_schema(conn)?;
